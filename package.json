@@ -1,0 +1,6 @@
+{
+  "name": "obsidian-link-opener",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Paste text, extract obsidian:// links, tap to open in Obsidian"
+}

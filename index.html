@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Obsidian Link Opener</title>
+<style>
+:root{
+  --bg:#0f0f12; --surface:#1a1a20; --border:#2a2a33;
+  --fg:#e8e8ec; --dim:#8a8a96; --accent:#a78bfa; --accent2:#7c3aed;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:var(--bg); color:var(--fg);
+  min-height:100vh; padding:16px; max-width:640px; margin:0 auto;
+}
+h1{font-size:17px; font-weight:600; margin-bottom:4px}
+.sub{color:var(--dim); font-size:13px; margin-bottom:14px}
+textarea{
+  width:100%; min-height:130px; resize:vertical;
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  color:var(--fg); font-size:14px; padding:12px; line-height:1.5;
+  outline:none; transition:border-color .2s;
+}
+textarea:focus{border-color:var(--accent2)}
+.row{display:flex; gap:8px; margin-top:10px}
+button{
+  flex:1; padding:11px 0; border:none; border-radius:10px;
+  font-size:14px; font-weight:600; cursor:pointer;
+  background:var(--surface); color:var(--fg); border:1px solid var(--border);
+  transition:opacity .15s;
+}
+button:active{opacity:.7}
+button.primary{background:linear-gradient(135deg,var(--accent2),var(--accent)); border:none; color:#fff}
+#links{margin-top:14px}
+.link-card{
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:13px 14px; margin-bottom:8px; display:flex; align-items:center; gap:12px;
+  cursor:pointer; transition:border-color .15s, transform .1s;
+}
+.link-card:active{transform:scale(.98); border-color:var(--accent)}
+.link-card .icon{font-size:20px}
+.link-card .txt{flex:1; min-width:0}
+.link-card .name{
+  font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; margin-bottom:2px;
+}
+.link-card .path{font-size:11.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.link-card .arrow{color:var(--dim); font-size:16px}
+#status{
+  margin-top:10px; text-align:center; font-size:13px; color:var(--dim);
+  min-height:20px; transition:color .2s;
+}
+#status.ok{color:#4ade80}
+#status.err{color:#f87171}
+.tip{margin-top:18px; font-size:12px; color:var(--dim); line-height:1.7;
+  background:var(--surface); border-radius:10px; padding:12px 14px;}
+.tip code{background:var(--border); padding:1px 5px; border-radius:4px; font-size:11px}
+.empty{color:var(--dim); font-size:13px; text-align:center; padding:24px 0}
+</style>
+</head>
+<body>
+<h1>📚 Obsidian Link Opener</h1>
+<div class="sub">粘贴任意文本 → 提取 Obsidian 链接 → 点击直达</div>
+
+<textarea id="input" placeholder="把含有 Obsidian 链接的文本粘到这里…&#10;&#10;支持：obsidian:// URI、[[wiki 链接]]、[[笔记|别名]]"></textarea>
+
+<div class="row">
+  <button class="primary" onclick="extract()">提取链接</button>
+  <button onclick="pasteAndGo()">📋 粘贴并提取</button>
+  <button onclick="clearAll()">清空</button>
+</div>
+
+<div id="status"></div>
+<div id="links"><div class="empty">还没有提取到链接</div></div>
+
+<div class="tip">
+💡 <b>用法</b>：在微信/任何地方复制整段文本 → 打开本页 → 点「粘贴并提取」→ 点链接卡片直接跳进 Obsidian。<br>
+支持自动识别：<code>obsidian://open?vault=…&file=…</code> 完整 URI、<code>[[笔记名]]</code> wiki 链接、<code>[[笔记名|别名]]</code>。wiki 链接会用默认 vault 打开。
+</div>
+
+<script>
+const DEFAULT_VAULT = 'notes';
+
+function extractObsidianUris(text){
+  // 完整 obsidian:// URI（到空白/尖括号/引号/括号为止）
+  const uris = [];
+  const re = /obsidian:\/\/[^\s<>"')\]]+/g;
+  let m;
+  while((m = re.exec(text)) !== null){
+    uris.push({uri: m[0], kind: 'uri'});
+  }
+  return uris;
+}
+
+function extractWikiLinks(text){
+  // [[target]] 或 [[target|alias]]
+  const links = [];
+  const re = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
+  let m;
+  while((m = re.exec(text)) !== null){
+    const target = m[1].trim();
+    if(target.startsWith('obsidian://')) continue;
+    links.push({target: target.replace(/\.md$/,''), alias: m[2] ? m[2].trim() : null, kind: 'wiki'});
+  }
+  return links;
+}
+
+function decodeFileFromUri(uri){
+  try{
+    const u = new URL(uri);
+    const file = u.searchParams.get('file');
+    if(file) return decodeURIComponent(file);
+    if(u.hash) return decodeURIComponent(u.hash.slice(1));
+  }catch(e){}
+  return null;
+}
+
+function prettyName(item){
+  if(item.kind === 'uri'){
+    const f = decodeFileFromUri(item.uri);
+    if(f) return f.split('/').pop().replace(/\.md$/,'');
+    return item.uri.slice(0, 40) + '…';
+  }
+  return item.alias || item.target.split('/').pop();
+}
+
+function prettyPath(item){
+  if(item.kind === 'uri'){
+    const f = decodeFileFromUri(item.uri);
+    return f ? f : item.uri;
+  }
+  return item.target + '  (vault: ' + DEFAULT_VAULT + ')';
+}
+
+function wikiToUri(item){
+  const enc = encodeURIComponent(item.target);
+  return 'obsidian://open?vault=' + encodeURIComponent(DEFAULT_VAULT) + '&file=' + enc;
+}
+
+function render(items){
+  const box = document.getElementById('links');
+  if(!items.length){
+    box.innerHTML = '<div class="empty">没有找到 Obsidian 链接</div>';
+    return;
+  }
+  box.innerHTML = '';
+  items.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'link-card';
+    card.innerHTML = '<div class="icon">📓</div><div class="txt">'
+      + '<div class="name"></div><div class="path"></div></div><div class="arrow">→</div>';
+    card.querySelector('.name').textContent = prettyName(item);
+    card.querySelector('.path').textContent = prettyPath(item);
+    card.onclick = () => {
+      const uri = item.kind === 'uri' ? item.uri : wikiToUri(item);
+      window.location.href = uri;
+    };
+    box.appendChild(card);
+  });
+}
+
+function extract(){
+  const text = document.getElementById('input').value;
+  const status = document.getElementById('status');
+  if(!text.trim()){
+    status.textContent = '先粘贴点内容进来'; status.className = ''; return;
+  }
+  const uris = extractObsidianUris(text);
+  const wikis = extractWikiLinks(text);
+  const seen = new Set(uris.map(u=>u.uri));
+  const wikisDedup = wikis.filter(w=>{
+    if(seen.has(w.target)) return false;
+    seen.add(w.target); return true;
+  });
+  const items = [...uris, ...wikisDedup];
+  render(items);
+  if(items.length){
+    status.textContent = '找到 ' + items.length + ' 个链接，点卡片打开';
+    status.className = 'ok';
+  } else {
+    status.textContent = '文本里没有 obsidian:// 链接或 [[wiki 链接]]';
+    status.className = 'err';
+  }
+}
+
+async function pasteAndGo(){
+  try{
+    const text = await navigator.clipboard.readText();
+    document.getElementById('input').value = text;
+    extract();
+  }catch(e){
+    const status = document.getElementById('status');
+    status.textContent = '剪贴板读取失败——长按文本框手动粘贴后点「提取链接」';
+    status.className = 'err';
+  }
+}
+
+function clearAll(){
+  document.getElementById('input').value = '';
+  document.getElementById('links').innerHTML = '<div class="empty">还没有提取到链接</div>';
+  const status = document.getElementById('status');
+  status.textContent = ''; status.className = '';
+}
+
+// 支持 URL 参数直接跳转: ?u=<encoded obsidian uri> —— 配合快捷指令用
+window.addEventListener('DOMContentLoaded', () => {
+  const u = new URLSearchParams(location.search).get('u');
+  if(u && u.startsWith('obsidian://')){
+    location.href = u;
+  }
+});
+</script>
+</body>
+</html>
