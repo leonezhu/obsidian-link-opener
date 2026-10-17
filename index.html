@@ -25,7 +25,7 @@ body{
   overflow:hidden;
 }
 @media (max-width:767px){
-  body{ justify-content:flex-start; padding-top:28vh; }
+  body{ justify-content:flex-start; padding-top:22vh; }
 }
 @media (min-width:768px){
   body{ justify-content:flex-start; padding-top:33vh; }
@@ -60,6 +60,19 @@ button.primary{background:linear-gradient(135deg,var(--accent2),var(--accent)); 
 }
 .link-card .path{font-size:11.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .link-card .arrow{color:var(--dim); font-size:16px}
+.link-card .acts{display:flex; gap:6px; align-items:center}
+.copy-btn{
+  flex:none; padding:6px 10px; border-radius:8px; font-size:12px; font-weight:500;
+  background:transparent; color:var(--dim); border:1px solid var(--border);
+}
+.copy-btn:active{background:var(--surface); color:var(--accent2); border-color:var(--accent)}
+#toast{
+  position:fixed; left:50%; bottom:8vh; transform:translateX(-50%);
+  background:var(--fg); color:var(--bg); font-size:13px; font-weight:500;
+  padding:9px 18px; border-radius:20px; opacity:0; pointer-events:none;
+  transition:opacity .2s; z-index:99;
+}
+#toast.show{opacity:.92}
 #status{
   margin-top:10px; text-align:center; font-size:13px; color:var(--dim);
   min-height:20px;
@@ -79,6 +92,7 @@ button.primary{background:linear-gradient(135deg,var(--accent2),var(--accent)); 
 
 <div id="status"></div>
 <div id="links"><div class="empty"></div></div>
+<div id="toast"></div>
 
 <script>
 const DEFAULT_VAULT = 'notes';
@@ -136,6 +150,44 @@ function wikiToUri(item){
   return 'obsidian://open?vault=' + encodeURIComponent(DEFAULT_VAULT) + '&file=' + encodeURIComponent(item.target);
 }
 
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1400);
+}
+
+function fileNameOf(item){
+  if(item.kind === 'uri'){
+    const f = decodeFileFromUri(item.uri);
+    if(f) return f.split('/').pop().replace(/\.md$/,'');
+    return null;
+  }
+  return item.target.split('/').pop().replace(/\.md$/,'');
+}
+
+function copyFileName(item){
+  const name = fileNameOf(item);
+  if(!name){ showToast('无法提取文件名'); return; }
+  const done = () => showToast('已复制：' + name);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(name).then(done).catch(()=>fallbackCopy(name, done));
+  }else{
+    fallbackCopy(name, done);
+  }
+}
+
+function fallbackCopy(text, done){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try{ document.execCommand('copy'); done(); }
+  catch(e){ showToast('复制失败'); }
+  document.body.removeChild(ta);
+}
+
 function render(items){
   const box = document.getElementById('links');
   if(!items.length){
@@ -146,9 +198,13 @@ function render(items){
   items.forEach((item) => {
     const card = document.createElement('div');
     card.className = 'link-card';
-    card.innerHTML = '<div class="txt"><div class="name"></div><div class="path"></div></div><div class="arrow">→</div>';
+    card.innerHTML = '<div class="txt"><div class="name"></div><div class="path"></div></div><div class="acts"><button class="copy-btn">复制名</button><div class="arrow">→</div></div>';
     card.querySelector('.name').textContent = prettyName(item);
     card.querySelector('.path').textContent = prettyPath(item);
+    card.querySelector('.copy-btn').onclick = (e) => {
+      e.stopPropagation();
+      copyFileName(item);
+    };
     card.onclick = () => {
       window.location.href = item.kind === 'uri' ? item.uri : wikiToUri(item);
     };
