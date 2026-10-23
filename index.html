@@ -98,11 +98,59 @@ button.primary{background:linear-gradient(135deg,var(--accent2),var(--accent)); 
 const DEFAULT_VAULT = 'notes';
 
 function extractObsidianUris(text){
+  // 解析器替代正则：file/query 参数值允许空格（文件名含空格），值以常见扩展名结尾即停，
+  // 或遇到 &新参数=、终止符（引号/括号/中文标点/换行）停；空格后若直接是新 URI 也停。
+  const EXT = ['.md', '.canvas', '.pdf', '.png', '.jpg', '.jpeg', '.webp'];
+  const STOP = '<>"\')]}，。；、！？…';
+  const isStop = c => STOP.includes(c) || c === '\n';
+  const isExtEnd = s => { const low = s.toLowerCase(); return EXT.some(e => low.endsWith(e)); };
+  const looksLikeParam = (s) => {
+    const nxt = s.indexOf('=');
+    const amp = s.indexOf('&');
+    return nxt > 0 && (amp < 0 || nxt < amp) && /^[A-Za-z0-9-]+$/.test(s.slice(0, nxt));
+  };
   const uris = [];
-  const re = /obsidian:\/\/[^\s<>"')\]]+/g;
-  let m;
-  while((m = re.exec(text)) !== null){
-    uris.push({uri: m[0], kind: 'uri'});
+  let i = 0;
+  while(true){
+    const idx = text.indexOf('obsidian://', i);
+    if(idx < 0) break;
+    const j = idx + 11;
+    const hostEnd = text.indexOf('?', j);
+    if(hostEnd < 0 || hostEnd - j > 30){ i = j; continue; }
+    const host = text.slice(j, hostEnd);
+    let k = hostEnd + 1;
+    const params = [];
+    let vEnd = hostEnd + 1;
+    while(k < text.length){
+      const eq = text.indexOf('=', k);
+      const amp = text.indexOf('&', k);
+      if(eq < 0 || (amp >= 0 && amp < eq)) break;
+      const name = text.slice(k, eq);
+      let v = eq + 1;
+      let val = '';
+      while(v < text.length){
+        const c = text[v];
+        if(isStop(c)) break;
+        if(c === '&'){
+          if(looksLikeParam(text.slice(v + 1))) break;
+          val += c; v++; continue;
+        }
+        if(c === ' '){
+          if(val && isExtEnd(val)) break;
+          const rest = text.slice(v).replace(/^ +/, '');
+          if(!rest || isStop(rest[0]) || rest.startsWith('obsidian://')) break;
+          val += c; v++; continue;
+        }
+        val += c; v++;
+        if(isExtEnd(val)) break;
+      }
+      params.push([name, val]);
+      vEnd = v;
+      if(v < text.length && text[v] === '&'){ k = v + 1; } else { k = v; break; }
+    }
+    const query = params.map(([n, p]) => n + '=' + p).join('&');
+    uris.push({uri: 'obsidian://' + host + '?' + query, kind: 'uri'});
+    i = Math.max(vEnd, j);
   }
   return uris;
 }
@@ -206,7 +254,7 @@ function render(items){
       copyFileName(item);
     };
     card.onclick = () => {
-      window.location.href = item.kind === 'uri' ? item.uri : wikiToUri(item);
+      window.location.href = item.kind === 'uri' ? item.uri.replace(/ /g, '%20') : wikiToUri(item);
     };
     box.appendChild(card);
   });
